@@ -5,10 +5,10 @@
 .import "HadithData.js" as Data
 
 var BAR_FORMATS = [
-  { id: "daily", label: "📜 Hadith of the Day" },
-  { id: "excerpt", label: "📜 Current Excerpt" },
-  { id: "timer", label: "📜 Next in Xh" },
-  { id: "compact", label: "📜 Icon Only" }
+  { id: "compact", label: "Icon Only", example: "📜" },
+  { id: "daily", label: "Collection #Number", example: "📜 Sahih al-Bukhari #1" },
+  { id: "excerpt", label: "Arabic Excerpt", example: "📜 إِنَّمَا الأَعْمَالُ…" },
+  { id: "timer", label: "Next Reminder", example: "📜 03:45:00" }
 ];
 
 var INTERVAL_PRESETS = [
@@ -222,19 +222,19 @@ function formatBarLabel(hadith, secondsRemaining, formatIndex) {
   var idx = parseInt(formatIndex, 10) || 0;
 
   switch (idx) {
-    case 0: // Hadith of the Day
+    case 0: // Icon Only (Default)
+      return icon;
+    case 1: // Collection #Number
       var col = (hadith && hadith.collectionName) ? hadith.collectionName : "Hadith";
       return icon + " " + col + " #" + (hadith ? hadith.hadithNumber : "1");
-    case 1: // Short Excerpt
+    case 2: // Short Excerpt
       var txt = (hadith && hadith.arabic) ? hadith.arabic : "Prophetic Hadith";
       if (txt.length > 24) txt = txt.substring(0, 22) + "…";
       return icon + " " + txt;
-    case 2: // Timer countdown
+    case 3: // Timer countdown
       return icon + " " + formatDuration(secondsRemaining);
-    case 3: // Compact Icon Only
-      return icon;
     default:
-      return icon + " Hadith";
+      return icon;
   }
 }
 

@@ -1157,6 +1157,53 @@ Panel {
                 }
               }
             }
+
+            PanelSeparator { foreground: root.barForeground }
+
+            PanelSectionHeader {
+              text: "3. MENUBAR WIDGET APPEARANCE"
+              foreground: root.barForeground
+              fontFamily: root.barFontFamily
+            }
+
+            Item {
+              width: parent.width
+              height: Style.space(32)
+
+              Row {
+                anchors.left: parent.left
+                anchors.verticalCenter: parent.verticalCenter
+                spacing: Style.space(8)
+
+                Text {
+                  textFormat: Text.PlainText
+                  text: "Bar Display Format:"
+                  color: root.barForeground
+                  font.family: root.barFontFamily
+                  font.pixelSize: Style.font.bodySmall
+                  anchors.verticalCenter: parent.verticalCenter
+                }
+              }
+
+              Row {
+                anchors.right: parent.right
+                anchors.verticalCenter: parent.verticalCenter
+                spacing: Style.space(4)
+
+                Repeater {
+                  model: Model.BAR_FORMATS
+
+                  Button {
+                    required property var modelData
+                    required property int index
+                    text: modelData.label
+                    selected: (root.configuredState.barFormatIndex !== undefined ? root.configuredState.barFormatIndex : 0) === index
+                    tooltipText: "Example: " + modelData.example + " (Right-click widget on bar to cycle)"
+                    onClicked: root.updateState({ barFormatIndex: index })
+                  }
+                }
+              }
+            }
           }
         }
       }
