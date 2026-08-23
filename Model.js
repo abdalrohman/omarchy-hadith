@@ -47,9 +47,10 @@ function getDefaultState() {
 function parseHadithState(raw) {
   var defaults = getDefaultState();
   if (!raw || typeof raw !== "string" || raw.trim() === "") return defaults;
+  if (raw.length > 65536) return defaults;
   try {
     var parsed = JSON.parse(raw);
-    if (!parsed || typeof parsed !== "object") return defaults;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return defaults;
 
     var barFormatIndex = (!isNaN(parsed.barFormatIndex) && parsed.barFormatIndex >= 0 && parsed.barFormatIndex < BAR_FORMATS.length)
       ? parseInt(parsed.barFormatIndex, 10)
@@ -63,29 +64,64 @@ function parseHadithState(raw) {
       ? parseInt(parsed.soundVolume, 10)
       : defaults.soundVolume;
 
-    var periodicIntervalHours = (!isNaN(parsed.periodicIntervalHours) && parsed.periodicIntervalHours > 0)
+    var periodicIntervalHours = (!isNaN(parsed.periodicIntervalHours) && parsed.periodicIntervalHours >= 1 && parsed.periodicIntervalHours <= 24)
       ? parseInt(parsed.periodicIntervalHours, 10)
       : defaults.periodicIntervalHours;
 
-    var bookmarks = Array.isArray(parsed.bookmarks) ? parsed.bookmarks : [];
-    var history = Array.isArray(parsed.history) ? parsed.history : [];
+    var bookmarks = [];
+    if (Array.isArray(parsed.bookmarks)) {
+      for (var b = 0; b < parsed.bookmarks.length && bookmarks.length < 100; b++) {
+        var bm = parsed.bookmarks[b];
+        if (typeof bm === "string" && bm.length > 0 && bm.length <= 64) {
+          bookmarks.push(bm);
+        }
+      }
+    }
 
-    var currentId = (typeof parsed.currentHadithId === "string" && parsed.currentHadithId !== "")
-      ? parsed.currentHadithId
-      : (parsed.currentHadith && parsed.currentHadith.id ? parsed.currentHadith.id : defaults.currentHadithId);
+    var history = [];
+    if (Array.isArray(parsed.history)) {
+      for (var h = 0; h < parsed.history.length && history.length < 50; h++) {
+        var hist = parsed.history[h];
+        if (typeof hist === "string" && hist.length > 0 && hist.length <= 64) {
+          history.push(hist);
+        }
+      }
+    }
+
+    var currentId = defaults.currentHadithId;
+    if (typeof parsed.currentHadithId === "string" && parsed.currentHadithId.length > 0 && parsed.currentHadithId.length <= 64) {
+      currentId = parsed.currentHadithId;
+    } else if (parsed.currentHadith && typeof parsed.currentHadith.id === "string" && parsed.currentHadith.id.length <= 64) {
+      currentId = parsed.currentHadith.id;
+    }
+
+    var prefCol = defaults.preferredCollection;
+    if (typeof parsed.preferredCollection === "string" && parsed.preferredCollection.length > 0 && parsed.preferredCollection.length <= 64) {
+      prefCol = parsed.preferredCollection;
+    }
+
+    var notifTime = defaults.dailyNotificationTime;
+    if (typeof parsed.dailyNotificationTime === "string" && /^([01]\d|2[0-3]):[0-5]\d$/.test(parsed.dailyNotificationTime)) {
+      notifTime = parsed.dailyNotificationTime;
+    }
+
+    var dailyDate = "";
+    if (typeof parsed.dailyHadithDate === "string" && /^\d{4}-\d{2}-\d{2}$/.test(parsed.dailyHadithDate)) {
+      dailyDate = parsed.dailyHadithDate;
+    }
 
     return {
       dailyNotificationEnabled: parsed.dailyNotificationEnabled !== undefined ? Boolean(parsed.dailyNotificationEnabled) : defaults.dailyNotificationEnabled,
-      dailyNotificationTime: typeof parsed.dailyNotificationTime === "string" ? parsed.dailyNotificationTime : defaults.dailyNotificationTime,
+      dailyNotificationTime: notifTime,
       periodicNotificationEnabled: parsed.periodicNotificationEnabled !== undefined ? Boolean(parsed.periodicNotificationEnabled) : defaults.periodicNotificationEnabled,
       periodicIntervalHours: periodicIntervalHours,
       soundEnabled: parsed.soundEnabled !== undefined ? Boolean(parsed.soundEnabled) : defaults.soundEnabled,
       soundVolume: soundVolume,
-      preferredCollection: typeof parsed.preferredCollection === "string" ? parsed.preferredCollection : defaults.preferredCollection,
+      preferredCollection: prefCol,
       fontSizeIndex: fontSizeIndex,
       barFormatIndex: barFormatIndex,
       currentHadithId: currentId,
-      dailyHadithDate: parsed.dailyHadithDate || "",
+      dailyHadithDate: dailyDate,
       bookmarks: bookmarks,
       history: history
     };

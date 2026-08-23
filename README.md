@@ -120,5 +120,23 @@ omarchy restart shell
 
 ---
 
+## ⚙️ Configuration & State Persistence
+
+State and user preferences are automatically saved at:
+- `~/.local/state/omarchy/settings/hadith.json`
+
+State loading is strictly bounded at the descriptor level (capped at 64 KiB via `head -c 65537`). If a state file is oversized or unreadable, the plugin safely falls back to defaults. Writes are atomic and symlink-safe.
+
+---
+
+## 📦 Dependencies & System Requirements
+
+- `head` (coreutils) from base system (used for descriptor-bounded state reads)
+- `python3` (for atomic state writes and clipboard/audio helpers)
+- `omarchy-notification-send` (from Omarchy desktop)
+- Audio player (`pw-play`, `paplay`, `mpv`, or `ffplay`) for chime playback
+
+---
+
 ## 📄 License
 Released under the [MIT License](LICENSE) by [@abdalrohman](https://github.com/abdalrohman).

@@ -29,6 +29,10 @@ Panel {
   // Live timestamp updated every second
   property date now: new Date()
 
+  // State storage path & maximum byte ceiling
+  readonly property int maxStateBytes: 65536
+  readonly property string statePath: Quickshell.env("HOME") + "/.local/state/omarchy/settings/hadith.json"
+
   // Configured settings state from ~/.local/state/omarchy/settings/hadith.json
   property var configuredState: Model.parseHadithState("{}")
 
@@ -59,7 +63,6 @@ Panel {
     refresh()
     setCenterHoverRevealSuppressed(false)
     root.controller.show()
-    hadithFile.reload()
     Qt.callLater(function() {
       if (root.opened) setCenterHoverRevealSuppressed(true)
     })
@@ -98,9 +101,15 @@ Panel {
       root.bar.centerHoverRevealSuppressed = value
   }
 
+  function readState() {
+    if (!stateReaderProc.running) {
+      stateReaderProc.running = true
+    }
+  }
+
   function refresh() {
     now = new Date()
-    hadithFile.reload()
+    readState()
     checkDailyRollover()
   }
 
@@ -121,7 +130,9 @@ Panel {
   // Persistence & State Management
   // --------------------------------------------------------------------------
   function loadState(raw) {
-    if (raw && typeof raw === "string" && raw.length > 200000) raw = raw.substring(0, 200000)
+    if (raw && typeof raw === "string" && raw.length > root.maxStateBytes) {
+      raw = ""
+    }
     configuredState = Model.parseHadithState(raw)
   }
 
@@ -288,19 +299,26 @@ Panel {
   }
 
   // --------------------------------------------------------------------------
-  // File Watchers & Background Processes
+  // Bounded State Reader & Background Processes
   // --------------------------------------------------------------------------
-  property FileView hadithFile: FileView {
-    path: Quickshell.env("HOME") + "/.local/state/omarchy/settings/hadith.json"
-    watchChanges: true
-    printErrors: false
-    onFileChanged: reload()
-    onLoaded: {
-      var raw = text()
-      if (raw && typeof raw === "string" && raw.length > 65536) raw = raw.substring(0, 65536)
-      root.loadState(raw)
+  Process {
+    id: stateReaderProc
+    command: ["head", "-c", String(root.maxStateBytes + 1), root.statePath]
+    running: true
+    stdout: StdioCollector { id: stateOut }
+    onExited: function(exitCode) {
+      if (exitCode === 0) {
+        var raw = stateOut.text
+        if (raw.length > root.maxStateBytes) {
+          console.warn("hadith: settings file exceeds size limit (" + raw.length + " > " + root.maxStateBytes + " bytes), rejecting file and using defaults")
+          root.loadState("")
+        } else {
+          root.loadState(raw)
+        }
+      } else {
+        root.loadState("")
+      }
     }
-    onLoadFailed: root.loadState("")
   }
 
   Timer {
@@ -463,6 +481,7 @@ Panel {
                 Text {
                   id: colBadgeText
                   anchors.centerIn: parent
+                  textFormat: Text.PlainText
                   text: root.activeHadith ? root.activeHadith.collectionName : "HADITH"
                   color: Color.accent
                   font.family: root.barFontFamily
@@ -472,6 +491,7 @@ Panel {
               }
 
               Text {
+                textFormat: Text.PlainText
                 text: "Hadith #" + (root.activeHadith ? root.activeHadith.hadithNumber : "1")
                 color: root.barForeground
                 font.family: root.barFontFamily
@@ -495,6 +515,7 @@ Panel {
                 Text {
                   id: gradeText
                   anchors.centerIn: parent
+                  textFormat: Text.PlainText
                   text: "Grade: " + (root.activeHadith ? (root.activeHadith.grade || "Sahih") : "Sahih")
                   color: Color.accent
                   font.family: root.barFontFamily
@@ -709,6 +730,7 @@ Panel {
               readonly property var filteredList: Model.filterHadiths(root.selectedCollection, root.searchQuery, root.configuredState.bookmarks)
 
               Text {
+                textFormat: Text.PlainText
                 visible: parent.filteredList.length === 0
                 width: parent.width
                 text: "No hadiths found matching your filter."
@@ -829,6 +851,7 @@ Panel {
           readonly property var bookmarkedList: Model.filterHadiths("bookmarks", "", root.configuredState.bookmarks)
 
           Text {
+            textFormat: Text.PlainText
             visible: parent.bookmarkedList.length === 0
             width: parent.width
             text: "You haven't bookmarked any Hadiths yet. Click ☆ Bookmark in the reader to save Hadiths."
@@ -1004,8 +1027,8 @@ Panel {
                   Column {
                     spacing: Style.space(2)
                     anchors.verticalCenter: parent.verticalCenter
-                    Text { text: "📜 Daily Hadith of the Day Notification"; color: root.barForeground; font.family: root.barFontFamily; font.pixelSize: Style.font.bodySmall; font.bold: true }
-                    Text { text: "Delivers a fresh Prophetic Hadith to your desktop every morning"; color: Qt.darker(root.barForeground, 1.4); font.family: root.barFontFamily; font.pixelSize: Style.font.caption }
+                    Text { textFormat: Text.PlainText; text: "📜 Daily Hadith of the Day Notification"; color: root.barForeground; font.family: root.barFontFamily; font.pixelSize: Style.font.bodySmall; font.bold: true }
+                    Text { textFormat: Text.PlainText; text: "Delivers a fresh Prophetic Hadith to your desktop every morning"; color: Qt.darker(root.barForeground, 1.4); font.family: root.barFontFamily; font.pixelSize: Style.font.caption }
                   }
                 }
 
@@ -1014,7 +1037,7 @@ Panel {
                   anchors.verticalCenter: parent.verticalCenter
                   spacing: Style.space(6)
 
-                  Text { text: "Scheduled:"; color: Qt.darker(root.barForeground, 1.4); font.family: root.barFontFamily; font.pixelSize: Style.font.caption; anchors.verticalCenter: parent.verticalCenter }
+                  Text { textFormat: Text.PlainText; text: "Scheduled:"; color: Qt.darker(root.barForeground, 1.4); font.family: root.barFontFamily; font.pixelSize: Style.font.caption; anchors.verticalCenter: parent.verticalCenter }
                   TextField {
                     width: Style.space(80)
                     text: root.configuredState.dailyNotificationTime || "08:00"
@@ -1043,6 +1066,7 @@ Panel {
                 }
 
                 Text {
+                  textFormat: Text.PlainText
                   text: "Periodic Reminder Interval:"
                   color: root.barForeground
                   font.family: root.barFontFamily
@@ -1091,6 +1115,7 @@ Panel {
                 spacing: Style.space(8)
 
                 Text {
+                  textFormat: Text.PlainText
                   text: "Arabic Typography Size:"
                   color: root.barForeground
                   font.family: root.barFontFamily
@@ -1129,6 +1154,7 @@ Panel {
                 spacing: Style.space(8)
 
                 Text {
+                  textFormat: Text.PlainText
                   text: "󰕾 Volume (" + (root.configuredState.soundVolume !== undefined ? root.configuredState.soundVolume : 80) + "%):"
                   color: root.barForeground
                   font.family: root.barFontFamily
