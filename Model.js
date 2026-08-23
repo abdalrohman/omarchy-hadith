@@ -179,10 +179,21 @@ function findHadithById(id) {
   return null;
 }
 
+function normalizeArabic(text) {
+  if (!text || typeof text !== "string") return "";
+  return text
+    .replace(/[\u064B-\u065F\u0670]/g, "")
+    .replace(/[إأآ]/g, "ا")
+    .replace(/ة/g, "ه")
+    .replace(/ى/g, "ي")
+    .toLowerCase();
+}
+
 function filterHadiths(collectionKey, query, bookmarksList) {
   var list = Data.BUILTIN_HADITHS;
   var out = [];
   var q = (query || "").trim().toLowerCase();
+  var normQ = normalizeArabic(q);
 
   for (var i = 0; i < list.length; i++) {
     var item = list[i];
@@ -199,7 +210,8 @@ function filterHadiths(collectionKey, query, bookmarksList) {
 
     // Search query filter
     if (q.length > 0) {
-      var inArabic = (item.arabic || "").toLowerCase().indexOf(q) !== -1;
+      var normArabic = normalizeArabic(item.arabic || "");
+      var inArabic = (item.arabic || "").toLowerCase().indexOf(q) !== -1 || (normQ.length > 0 && normArabic.indexOf(normQ) !== -1);
       var inEnglish = (item.english || "").toLowerCase().indexOf(q) !== -1;
       var inCollection = (item.collectionName || "").toLowerCase().indexOf(q) !== -1;
       var inNumber = String(item.hadithNumber || "").indexOf(q) !== -1;
