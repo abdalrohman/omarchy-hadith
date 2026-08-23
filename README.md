@@ -36,10 +36,10 @@ Developed by [@abdalrohman](https://github.com/abdalrohman).
   - **Right-Click**: Cycle through widget display formats.
   - **Scroll Wheel**: Quick navigate between Previous / Next Hadiths.
 - **Multiple Display Formats** (Right-Click to cycle):
-  1. `[Icon] Collection #Number` (e.g. `📜 Sahih al-Bukhari #1`)
-  2. `[Icon] Excerpt` (e.g. `📜 إنما الأعمال بالنيات…`)
-  3. `[Icon] Next in Xh` (e.g. `📜 3h 45m`)
-  4. `[Icon]` only
+  1. `[Icon]` only (Default)
+  2. `[Icon] Collection #Number` (e.g. `📜 Sahih al-Bukhari #1`)
+  3. `[Icon] Excerpt` (e.g. `📜 إنما الأعمال بالنيات…`)
+  4. `[Icon] Next in Xh` (e.g. `📜 3h 45m`)
 
 ---
 

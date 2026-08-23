@@ -295,7 +295,11 @@ Panel {
     watchChanges: true
     printErrors: false
     onFileChanged: reload()
-    onLoaded: root.loadState(text())
+    onLoaded: {
+      var raw = text()
+      if (raw && typeof raw === "string" && raw.length > 65536) raw = raw.substring(0, 65536)
+      root.loadState(raw)
+    }
     onLoadFailed: root.loadState("")
   }
 
