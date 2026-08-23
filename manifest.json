@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 1,
+  "id": "abdulrahman.hadith",
+  "name": "Hadith",
+  "version": "1.0.0",
+  "author": "abdalrohman",
+  "license": "MIT",
+  "description": "Authentic Prophetic Hadiths from 10 major collections (36,000+ hadiths), daily Hadith of the day, bookmarks, search, and scheduled desktop notifications",
+  "kinds": [
+    "bar-widget"
+  ],
+  "entryPoints": {
+    "barWidget": "BarWidget.qml"
+  },
+  "barWidget": {
+    "displayName": "Hadith",
+    "description": "Daily Prophetic Hadiths, collections browser & search",
+    "category": "Life",
+    "allowMultiple": false,
+    "defaultSection": "center"
+  }
+}

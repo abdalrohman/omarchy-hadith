@@ -1,0 +1,244 @@
+// ============================================================================
+// Model.js — Core Business Logic & State Engine for Omarchy Hadith Plugin
+// ============================================================================
+.pragma library
+.import "HadithData.js" as Data
+
+var BAR_FORMATS = [
+  { id: "daily", label: "📜 Hadith of the Day" },
+  { id: "excerpt", label: "📜 Current Excerpt" },
+  { id: "timer", label: "📜 Next in Xh" },
+  { id: "compact", label: "📜 Icon Only" }
+];
+
+var INTERVAL_PRESETS = [
+  { label: "1h", value: 1 },
+  { label: "2h", value: 2 },
+  { label: "4h", value: 4 },
+  { label: "8h", value: 8 },
+  { label: "12h", value: 12 },
+  { label: "24h", value: 24 }
+];
+
+var FONT_SIZES = [
+  { label: "Normal", size: 18 },
+  { label: "Large", size: 22 },
+  { label: "Extra Large", size: 26 }
+];
+
+function getDefaultState() {
+  return {
+    dailyNotificationEnabled: true,
+    dailyNotificationTime: "08:00",
+    periodicNotificationEnabled: false,
+    periodicIntervalHours: 4,
+    soundEnabled: true,
+    soundVolume: 80,
+    preferredCollection: "all",
+    fontSizeIndex: 1,
+    barFormatIndex: 0,
+    currentHadithId: "nawawi-1",
+    dailyHadithDate: "",
+    bookmarks: [],
+    history: []
+  };
+}
+
+function parseHadithState(raw) {
+  var defaults = getDefaultState();
+  if (!raw || typeof raw !== "string" || raw.trim() === "") return defaults;
+  try {
+    var parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object") return defaults;
+
+    var barFormatIndex = (!isNaN(parsed.barFormatIndex) && parsed.barFormatIndex >= 0 && parsed.barFormatIndex < BAR_FORMATS.length)
+      ? parseInt(parsed.barFormatIndex, 10)
+      : defaults.barFormatIndex;
+
+    var fontSizeIndex = (!isNaN(parsed.fontSizeIndex) && parsed.fontSizeIndex >= 0 && parsed.fontSizeIndex < FONT_SIZES.length)
+      ? parseInt(parsed.fontSizeIndex, 10)
+      : defaults.fontSizeIndex;
+
+    var soundVolume = (!isNaN(parsed.soundVolume) && parsed.soundVolume >= 0 && parsed.soundVolume <= 100)
+      ? parseInt(parsed.soundVolume, 10)
+      : defaults.soundVolume;
+
+    var periodicIntervalHours = (!isNaN(parsed.periodicIntervalHours) && parsed.periodicIntervalHours > 0)
+      ? parseInt(parsed.periodicIntervalHours, 10)
+      : defaults.periodicIntervalHours;
+
+    var bookmarks = Array.isArray(parsed.bookmarks) ? parsed.bookmarks : [];
+    var history = Array.isArray(parsed.history) ? parsed.history : [];
+
+    var currentId = (typeof parsed.currentHadithId === "string" && parsed.currentHadithId !== "")
+      ? parsed.currentHadithId
+      : (parsed.currentHadith && parsed.currentHadith.id ? parsed.currentHadith.id : defaults.currentHadithId);
+
+    return {
+      dailyNotificationEnabled: parsed.dailyNotificationEnabled !== undefined ? Boolean(parsed.dailyNotificationEnabled) : defaults.dailyNotificationEnabled,
+      dailyNotificationTime: typeof parsed.dailyNotificationTime === "string" ? parsed.dailyNotificationTime : defaults.dailyNotificationTime,
+      periodicNotificationEnabled: parsed.periodicNotificationEnabled !== undefined ? Boolean(parsed.periodicNotificationEnabled) : defaults.periodicNotificationEnabled,
+      periodicIntervalHours: periodicIntervalHours,
+      soundEnabled: parsed.soundEnabled !== undefined ? Boolean(parsed.soundEnabled) : defaults.soundEnabled,
+      soundVolume: soundVolume,
+      preferredCollection: typeof parsed.preferredCollection === "string" ? parsed.preferredCollection : defaults.preferredCollection,
+      fontSizeIndex: fontSizeIndex,
+      barFormatIndex: barFormatIndex,
+      currentHadithId: currentId,
+      dailyHadithDate: parsed.dailyHadithDate || "",
+      bookmarks: bookmarks,
+      history: history
+    };
+  } catch (e) {
+    return defaults;
+  }
+}
+
+function getDailyHadith(dateObj, collectionKey) {
+  var pool = Data.BUILTIN_HADITHS;
+  if (collectionKey && collectionKey !== "all") {
+    var filtered = [];
+    for (var i = 0; i < pool.length; i++) {
+      if (pool[i].collection === collectionKey) filtered.push(pool[i]);
+    }
+    if (filtered.length > 0) pool = filtered;
+  }
+  if (!pool || pool.length === 0) pool = Data.BUILTIN_HADITHS;
+
+  var d = dateObj || new Date();
+  var start = new Date(d.getFullYear(), 0, 0);
+  var diff = d - start;
+  var oneDay = 1000 * 60 * 60 * 24;
+  var dayOfYear = Math.floor(diff / oneDay);
+  var idx = dayOfYear % pool.length;
+  return pool[idx];
+}
+
+function getRandomHadith(collectionKey, excludeId) {
+  var pool = Data.BUILTIN_HADITHS;
+  if (collectionKey && collectionKey !== "all") {
+    var filtered = [];
+    for (var i = 0; i < pool.length; i++) {
+      if (pool[i].collection === collectionKey) filtered.push(pool[i]);
+    }
+    if (filtered.length > 0) pool = filtered;
+  }
+  if (!pool || pool.length === 0) pool = Data.BUILTIN_HADITHS;
+
+  if (pool.length === 1) return pool[0];
+  var pickPool = [];
+  for (var j = 0; j < pool.length; j++) {
+    if (pool[j].id !== excludeId) pickPool.push(pool[j]);
+  }
+  if (pickPool.length === 0) pickPool = pool;
+  var randIdx = Math.floor(Math.random() * pickPool.length);
+  return pickPool[randIdx];
+}
+
+function findHadithById(id) {
+  if (!id) return null;
+  for (var i = 0; i < Data.BUILTIN_HADITHS.length; i++) {
+    if (Data.BUILTIN_HADITHS[i].id === id) return Data.BUILTIN_HADITHS[i];
+  }
+  return null;
+}
+
+function filterHadiths(collectionKey, query, bookmarksList) {
+  var list = Data.BUILTIN_HADITHS;
+  var out = [];
+  var q = (query || "").trim().toLowerCase();
+
+  for (var i = 0; i < list.length; i++) {
+    var item = list[i];
+    if (!item) continue;
+
+    // Collection filter
+    if (collectionKey && collectionKey !== "all") {
+      if (collectionKey === "bookmarks") {
+        if (!bookmarksList || bookmarksList.indexOf(item.id) === -1) continue;
+      } else {
+        if (item.collection !== collectionKey) continue;
+      }
+    }
+
+    // Search query filter
+    if (q.length > 0) {
+      var inArabic = (item.arabic || "").toLowerCase().indexOf(q) !== -1;
+      var inEnglish = (item.english || "").toLowerCase().indexOf(q) !== -1;
+      var inCollection = (item.collectionName || "").toLowerCase().indexOf(q) !== -1;
+      var inNumber = String(item.hadithNumber || "").indexOf(q) !== -1;
+      if (!inArabic && !inEnglish && !inCollection && !inNumber) continue;
+    }
+
+    out.push(item);
+  }
+
+  return out;
+}
+
+function getNextHadith(currentId, collectionKey, bookmarksList) {
+  var pool = filterHadiths(collectionKey, "", bookmarksList);
+  if (!pool || pool.length === 0) pool = Data.BUILTIN_HADITHS;
+  var curIdx = -1;
+  for (var i = 0; i < pool.length; i++) {
+    if (pool[i].id === currentId) {
+      curIdx = i;
+      break;
+    }
+  }
+  var nextIdx = (curIdx + 1) % pool.length;
+  return pool[nextIdx];
+}
+
+function getPrevHadith(currentId, collectionKey, bookmarksList) {
+  var pool = filterHadiths(collectionKey, "", bookmarksList);
+  if (!pool || pool.length === 0) pool = Data.BUILTIN_HADITHS;
+  var curIdx = -1;
+  for (var i = 0; i < pool.length; i++) {
+    if (pool[i].id === currentId) {
+      curIdx = i;
+      break;
+    }
+  }
+  var prevIdx = (curIdx - 1 + pool.length) % pool.length;
+  return pool[prevIdx];
+}
+
+function formatDuration(totalSeconds) {
+  var s = Math.max(0, Math.floor(totalSeconds));
+  var m = Math.floor(s / 60);
+  var remSec = s % 60;
+  if (m < 60) {
+    if (m === 0) return remSec + "s";
+    return m + "m " + (remSec < 10 ? "0" : "") + remSec + "s";
+  }
+  var h = Math.floor(m / 60);
+  var remMin = m % 60;
+  return h + "h " + (remMin < 10 ? "0" : "") + remMin + "m";
+}
+
+function formatBarLabel(hadith, secondsRemaining, formatIndex) {
+  var icon = "📜";
+  var idx = parseInt(formatIndex, 10) || 0;
+
+  switch (idx) {
+    case 0: // Hadith of the Day
+      var col = (hadith && hadith.collectionName) ? hadith.collectionName : "Hadith";
+      return icon + " " + col + " #" + (hadith ? hadith.hadithNumber : "1");
+    case 1: // Short Excerpt
+      var txt = (hadith && hadith.arabic) ? hadith.arabic : "Prophetic Hadith";
+      if (txt.length > 24) txt = txt.substring(0, 22) + "…";
+      return icon + " " + txt;
+    case 2: // Timer countdown
+      return icon + " " + formatDuration(secondsRemaining);
+    case 3: // Compact Icon Only
+      return icon;
+    default:
+      return icon + " Hadith";
+  }
+}
+
+function escapeBash(str) {
+  if (typeof str !== "string") str = String(str || "");
+  return "'" + str.replace(/'/g, "'\\''") + "'";
+}
