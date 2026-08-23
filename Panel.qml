@@ -263,8 +263,8 @@ Panel {
       "omarchy-notification-send",
       "-g", "📜",
       "-u", "normal",
-      title,
-      message
+      Model.escapeNotificationMarkup(title),
+      Model.escapeNotificationMarkup(message)
     ]
     notifyProc.running = true
   }
