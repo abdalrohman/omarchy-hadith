@@ -3,6 +3,7 @@
 // ============================================================================
 .pragma library
 .import "HadithData.js" as Data
+.import "HadithTranslations.js" as Tr
 
 var BAR_FORMATS = [
   { id: "compact", label: "Icon Only", example: "📜" },
@@ -37,6 +38,7 @@ function getDefaultState() {
     preferredCollection: "all",
     fontSizeIndex: 1,
     barFormatIndex: 0,
+    translationLanguage: "en",
     currentHadithId: "nawawi-1",
     dailyHadithDate: "",
     bookmarks: [],
@@ -105,6 +107,11 @@ function parseHadithState(raw) {
       notifTime = parsed.dailyNotificationTime;
     }
 
+    var translationLanguage = defaults.translationLanguage;
+    if (typeof parsed.translationLanguage === "string" && isTranslationLanguage(parsed.translationLanguage)) {
+      translationLanguage = parsed.translationLanguage;
+    }
+
     var dailyDate = "";
     if (typeof parsed.dailyHadithDate === "string" && /^\d{4}-\d{2}-\d{2}$/.test(parsed.dailyHadithDate)) {
       dailyDate = parsed.dailyHadithDate;
@@ -120,6 +127,7 @@ function parseHadithState(raw) {
       preferredCollection: prefCol,
       fontSizeIndex: fontSizeIndex,
       barFormatIndex: barFormatIndex,
+      translationLanguage: translationLanguage,
       currentHadithId: currentId,
       dailyHadithDate: dailyDate,
       bookmarks: bookmarks,
@@ -128,6 +136,36 @@ function parseHadithState(raw) {
   } catch (e) {
     return defaults;
   }
+}
+
+var TRANSLATION_LANGUAGES = Tr.LANGUAGES;
+
+function isTranslationLanguage(code) {
+  for (var i = 0; i < TRANSLATION_LANGUAGES.length; i++) {
+    if (TRANSLATION_LANGUAGES[i].code === code) return true;
+  }
+  return false;
+}
+
+function translationLanguageLabel(code) {
+  for (var i = 0; i < TRANSLATION_LANGUAGES.length; i++) {
+    if (TRANSLATION_LANGUAGES[i].code === code) return TRANSLATION_LANGUAGES[i].label;
+  }
+  return "English";
+}
+
+// Meaning text for a hadith in the chosen language. Falls back to English when the
+// bundled data has no translation for that hadith.
+function getTranslation(hadith, lang) {
+  if (!hadith) return { text: "", lang: "en", fallback: false, source: "" };
+  if (lang && lang !== "en") {
+    var entry = Tr.TRANSLATIONS[hadith.id];
+    if (entry && typeof entry[lang] === "string" && entry[lang].length > 0) {
+      return { text: entry[lang], lang: lang, fallback: false, source: Tr.SOURCES[lang] || "" };
+    }
+    return { text: hadith.english || "", lang: "en", fallback: true, source: "" };
+  }
+  return { text: hadith.english || "", lang: "en", fallback: false, source: "" };
 }
 
 function getDailyHadith(dateObj, collectionKey) {
@@ -189,7 +227,7 @@ function normalizeArabic(text) {
     .toLowerCase();
 }
 
-function filterHadiths(collectionKey, query, bookmarksList) {
+function filterHadiths(collectionKey, query, bookmarksList, lang) {
   var list = Data.BUILTIN_HADITHS;
   var out = [];
   var q = (query || "").trim().toLowerCase();
@@ -213,6 +251,10 @@ function filterHadiths(collectionKey, query, bookmarksList) {
       var normArabic = normalizeArabic(item.arabic || "");
       var inArabic = (item.arabic || "").toLowerCase().indexOf(q) !== -1 || (normQ.length > 0 && normArabic.indexOf(normQ) !== -1);
       var inEnglish = (item.english || "").toLowerCase().indexOf(q) !== -1;
+      if (!inEnglish && lang && lang !== "en") {
+        var tr = Tr.TRANSLATIONS[item.id];
+        inEnglish = !!(tr && typeof tr[lang] === "string" && tr[lang].toLowerCase().indexOf(q) !== -1);
+      }
       var inCollection = (item.collectionName || "").toLowerCase().indexOf(q) !== -1;
       var inNumber = String(item.hadithNumber || "").indexOf(q) !== -1;
       if (!inArabic && !inEnglish && !inCollection && !inNumber) continue;
