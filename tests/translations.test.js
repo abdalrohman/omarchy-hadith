@@ -8,7 +8,8 @@ const load = (f) => fs.readFileSync(path.join(dir, f), "utf8")
 const Data = new Function(load("HadithData.js") + "; return { COLLECTIONS, BUILTIN_HADITHS };")();
 const Tr = new Function(load("HadithTranslations.js") + "; return { LANGUAGES, SOURCES, TRANSLATIONS };")();
 const M = new Function("Data", "Tr", load("Model.js") +
-  "; return { parseHadithState, getTranslation, filterHadiths, isTranslationLanguage, translationLanguageLabel, TRANSLATION_LANGUAGES };")(Data, Tr);
+  "; return { parseHadithState, getTranslation, filterHadiths, isTranslationLanguage, translationLanguageLabel, TRANSLATION_LANGUAGES," +
+  " bundledCount, translationAvailable, downloadEstimateMB, formatCount, formatMB, parseHadithId, placeholderEntry };")(Data, Tr);
 
 let fails = 0;
 const ok = (cond, msg) => { console.log((cond ? "PASS " : "FAIL ") + msg); if (!cond) fails++; };
@@ -43,6 +44,22 @@ const n = { tr: 0, ru: 0 };
 for (const h of Data.BUILTIN_HADITHS) for (const l of ["tr", "ru"]) if (!M.getTranslation(h, l).fallback) n[l]++;
 ok(n.tr === 64 && n.ru === 30, `coverage tr=${n.tr} ru=${n.ru}`);
 ok(M.TRANSLATION_LANGUAGES.map((l) => l.code).join(",") === "en,tr,ru", "language list en,tr,ru");
+
+// Downloaded hadiths carry translations inline and take precedence
+const remote = { id: "abudawud-500", collection: "abudawud", english: "E", tr: "T-inline", remote: true };
+ok(M.getTranslation(remote, "tr").text === "T-inline" && !M.getTranslation(remote, "tr").fallback, "inline downloaded translation used");
+ok(M.getTranslation(remote, "ru").fallback && M.getTranslation(remote, "ru").text === "E", "missing inline ru falls back to English");
+
+// Full-collection helpers
+ok(M.bundledCount("bukhari") === 10 && M.bundledCount("nope") === 0, "bundledCount");
+ok(M.translationAvailable("bukhari", "ru") && !M.translationAvailable("nasai", "tr") && !M.translationAvailable("qudsi", "ru"), "translationAvailable (Nasa'i tr excluded)");
+ok(Math.abs(M.downloadEstimateMB("bukhari", "tr") - 24.4) < 0.01 && M.downloadEstimateMB("bukhari", "en") === 14.2, "downloadEstimateMB");
+ok(M.formatCount(36108) === "36,108" && M.formatCount(7) === "7" && M.formatCount(1000000) === "1,000,000", "formatCount");
+ok(M.formatMB(13667486, true) === "13 MB" && M.formatMB(0.1, false) === "0.1 MB", "formatMB");
+ok(M.parseHadithId("bukhari-7563").number === 7563 && M.parseHadithId("../etc-1") === null && M.parseHadithId("foo-1") === null, "parseHadithId validates");
+const ph = M.placeholderEntry("muslim-2564");
+ok(ph && ph.placeholder && ph.collectionName === "Sahih Muslim" && ph.hadithNumber === 2564, "placeholderEntry");
+ok(M.placeholderEntry("<b>x</b>-1") === null, "placeholderEntry rejects bad ids");
 
 console.log(fails ? `${fails} FAILED` : "ALL PASSED");
 process.exit(fails ? 1 : 0);

@@ -159,6 +159,10 @@ function translationLanguageLabel(code) {
 function getTranslation(hadith, lang) {
   if (!hadith) return { text: "", lang: "en", fallback: false, source: "" };
   if (lang && lang !== "en") {
+    // Downloaded hadiths carry their translations inline
+    if (typeof hadith[lang] === "string" && hadith[lang].length > 0) {
+      return { text: hadith[lang], lang: lang, fallback: false, source: Tr.SOURCES[lang] || "" };
+    }
     var entry = Tr.TRANSLATIONS[hadith.id];
     if (entry && typeof entry[lang] === "string" && entry[lang].length > 0) {
       return { text: entry[lang], lang: lang, fallback: false, source: Tr.SOURCES[lang] || "" };
@@ -166,6 +170,76 @@ function getTranslation(hadith, lang) {
     return { text: hadith.english || "", lang: "en", fallback: true, source: "" };
   }
   return { text: hadith.english || "", lang: "en", fallback: false, source: "" };
+}
+
+// ---------------------------------------------------------------------------
+// Full collections (optional downloads via bin/hadith_library.py)
+// ---------------------------------------------------------------------------
+// Approximate upstream download sizes in MB (Arabic + English), and per translation.
+var DOWNLOAD_MB = {
+  bukhari: 14.2, muslim: 12.3, abudawud: 10.2, tirmidhi: 9.2, ibnmajah: 7.6,
+  nasai: 9.8, malik: 3.5, nawawi: 0.1, qudsi: 0.1, dehlawi: 0.1
+};
+var TRANSLATION_MB = {
+  tr: { bukhari: 10.2, muslim: 6.8, abudawud: 4.2, tirmidhi: 3.6, ibnmajah: 4.6, malik: 0.9, nawawi: 0.1 },
+  ru: { bukhari: 8.0, muslim: 2.8, abudawud: 4.9 }
+};
+
+function collectionInfo(key) {
+  for (var i = 0; i < Data.COLLECTIONS.length; i++) {
+    if (Data.COLLECTIONS[i].key === key) return Data.COLLECTIONS[i];
+  }
+  return null;
+}
+
+function bundledCount(key) {
+  var n = 0;
+  for (var i = 0; i < Data.BUILTIN_HADITHS.length; i++) {
+    if (Data.BUILTIN_HADITHS[i].collection === key) n++;
+  }
+  return n;
+}
+
+function translationAvailable(key, lang) {
+  return !!(TRANSLATION_MB[lang] && TRANSLATION_MB[lang][key] !== undefined);
+}
+
+function downloadEstimateMB(key, lang) {
+  var mb = DOWNLOAD_MB[key] || 0;
+  if (lang && TRANSLATION_MB[lang] && TRANSLATION_MB[lang][key]) mb += TRANSLATION_MB[lang][key];
+  return mb;
+}
+
+function formatCount(n) {
+  var s = String(Math.max(0, Math.floor(n || 0)));
+  return s.replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+}
+
+function formatMB(bytesOrMb, isBytes) {
+  var mb = isBytes ? (bytesOrMb || 0) / 1048576 : (bytesOrMb || 0);
+  return (mb < 1 ? mb.toFixed(1) : String(Math.round(mb))) + " MB";
+}
+
+function parseHadithId(id) {
+  var m = /^([a-z]{2,16})-(\d{1,6})$/.exec(id || "");
+  if (!m || !collectionInfo(m[1])) return null;
+  return { collection: m[1], number: parseInt(m[2], 10) };
+}
+
+// List entry for a bookmark whose collection is neither bundled nor downloaded.
+function placeholderEntry(id) {
+  var p = parseHadithId(id);
+  if (!p) return null;
+  var info = collectionInfo(p.collection);
+  return {
+    id: id,
+    collection: p.collection,
+    collectionName: info ? info.name : p.collection,
+    hadithNumber: p.number,
+    grade: "",
+    arabic: "Download this collection in Settings to read it",
+    placeholder: true
+  };
 }
 
 function getDailyHadith(dateObj, collectionKey) {

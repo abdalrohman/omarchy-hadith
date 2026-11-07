@@ -37,7 +37,30 @@ Panel {
   property var configuredState: Model.parseHadithState("{}")
 
   // Active Hadith resolution
-  readonly property var activeHadith: Model.findHadithById(configuredState.currentHadithId) || Model.getDailyHadith(root.now, configuredState.preferredCollection) || Data.BUILTIN_HADITHS[0]
+  // Full-collection library (optional downloads, see bin/hadith_library.py)
+  readonly property string libraryScript: root.pluginDir.replace(/^[a-z]+:\/\//, "").replace(/\/$/, "") + "/bin/hadith_library.py"
+  readonly property int maxLibraryOutput: 2 * 1024 * 1024
+  property var libraryStatus: ({})
+  property string libraryBusy: ""
+  property string libraryError: ""
+  property var remoteHadith: null
+  property bool remoteLoading: false
+  property var pendingGet: null
+  property var remoteList: []
+  property int remoteListTotal: 0
+  property bool remoteSearchTruncated: false
+  property bool remoteListLoading: false
+  property string listInFlightKey: ""
+  property string appliedListKey: ""
+  property bool listPending: false
+  property bool listAppend: false
+  property var remoteBookmarks: []
+  readonly property bool anyDownloaded: Object.keys(root.libraryStatus || {}).length > 0
+  readonly property string currentHadithId: configuredState.currentHadithId || ""
+
+  readonly property var activeHadith: (root.remoteHadith && (root.remoteHadith.id === configuredState.currentHadithId || root.remoteLoading))
+    ? root.remoteHadith
+    : (Model.findHadithById(configuredState.currentHadithId) || Model.getDailyHadith(root.now, configuredState.preferredCollection) || Data.BUILTIN_HADITHS[0])
   readonly property bool isBookmarked: (activeHadith && configuredState.bookmarks) ? configuredState.bookmarks.indexOf(activeHadith.id) !== -1 : false
 
   // Periodic reminder countdown (seconds remaining)
@@ -115,6 +138,191 @@ Panel {
     now = new Date()
     readState()
     checkDailyRollover()
+    refreshLibrary()
+  }
+
+  // --------------------------------------------------------------------------
+  // Full-Collection Library (bin/hadith_library.py)
+  // --------------------------------------------------------------------------
+  function runLibrary(proc, args) {
+    proc.command = ["python3", "-I", root.libraryScript].concat(args)
+    proc.running = true
+  }
+
+  function parseLibrary(text) {
+    if (!text || text.length > root.maxLibraryOutput) return null
+    try {
+      var d = JSON.parse(text)
+      return (d && typeof d === "object") ? d : null
+    } catch (e) {
+      return null
+    }
+  }
+
+  function isDownloaded(coll) {
+    return !!(root.libraryStatus && root.libraryStatus[coll])
+  }
+
+  function collectionCount(coll) {
+    if (isDownloaded(coll)) return root.libraryStatus[coll].count
+    return Model.bundledCount(coll)
+  }
+
+  readonly property int availableTotal: {
+    var total = 0
+    for (var i = 0; i < Data.COLLECTIONS.length; i++) total += collectionCount(Data.COLLECTIONS[i].key)
+    return total
+  }
+
+  function refreshLibrary() {
+    if (!libStatusProc.running) runLibrary(libStatusProc, ["status"])
+  }
+
+  function downloadCollection(coll) {
+    if (root.libraryBusy !== "" || libDownloadProc.running) return
+    var args = ["download", coll]
+    var lang = root.translationLanguage
+    if (lang !== "en" && Model.translationAvailable(coll, lang)) args.push(lang)
+    root.libraryError = ""
+    root.libraryBusy = coll
+    runLibrary(libDownloadProc, args)
+  }
+
+  function deleteCollection(coll) {
+    if (root.libraryBusy !== "" || libDownloadProc.running) return
+    root.libraryError = ""
+    root.libraryBusy = coll
+    runLibrary(libDownloadProc, ["delete", coll])
+  }
+
+  function syncRemoteHadith() {
+    var p = Model.parseHadithId(root.currentHadithId)
+    if (!p || !isDownloaded(p.collection)) {
+      root.remoteHadith = null
+      root.remoteLoading = false
+      return
+    }
+    if (root.remoteHadith && root.remoteHadith.id === root.currentHadithId) return
+    requestGet(p.collection, p.number)
+  }
+
+  function requestGet(coll, number) {
+    root.remoteLoading = true
+    if (libGetProc.running) {
+      root.pendingGet = [coll, String(number)]
+      return
+    }
+    runLibrary(libGetProc, ["get", coll, String(number)])
+  }
+
+  // Handlers below run before dependent bindings re-evaluate, so request logic computes
+  // from primitive state (the *Now() functions) and is deferred with Qt.callLater.
+  onCurrentHadithIdChanged: Qt.callLater(root.syncRemoteHadith)
+  readonly property string bookmarksKey: (configuredState.bookmarks || []).join(",")
+  onBookmarksKeyChanged: refreshRemoteBookmarks()
+  onLibraryStatusChanged: {
+    Qt.callLater(root.syncRemoteHadith)
+    Qt.callLater(root.refreshRemoteList)
+    Qt.callLater(root.refreshRemoteBookmarks)
+  }
+  onSearchQueryChanged: listDebounce.restart()
+  onSelectedCollectionChanged: Qt.callLater(root.refreshRemoteList)
+  onTranslationLanguageChanged: if (root.searchQuery.trim() !== "") Qt.callLater(root.refreshRemoteList)
+
+  // Remote list: a page of a downloaded collection, or search results across them.
+  readonly property bool browsingRemote: root.selectedCollection !== "all" && isDownloaded(root.selectedCollection)
+  readonly property bool searchingRemote: root.searchQuery.trim() !== ""
+    && (root.browsingRemote || (root.selectedCollection === "all" && root.anyDownloaded))
+
+  function browsingRemoteNow() {
+    return root.selectedCollection !== "all" && isDownloaded(root.selectedCollection)
+  }
+
+  function searchingRemoteNow() {
+    if (root.searchQuery.trim() === "") return false
+    if (browsingRemoteNow()) return true
+    return root.selectedCollection === "all" && Object.keys(root.libraryStatus || {}).length > 0
+  }
+
+  function desiredListKey() {
+    var lang = configuredState.translationLanguage || "en"
+    if (searchingRemoteNow()) return "search|" + root.selectedCollection + "|" + lang + "|" + root.searchQuery.trim()
+    if (browsingRemoteNow()) return "list|" + root.selectedCollection
+    return ""
+  }
+
+  function refreshRemoteList() {
+    var key = desiredListKey()
+    if (key === "") {
+      root.appliedListKey = ""
+      root.remoteList = []
+      root.remoteListTotal = 0
+      root.remoteSearchTruncated = false
+      return
+    }
+    if (libListProc.running) {
+      root.listPending = true
+      return
+    }
+    root.listAppend = false
+    root.listInFlightKey = key
+    root.remoteListLoading = true
+    if (key !== root.appliedListKey) {
+      root.remoteList = []
+      root.remoteListTotal = 0
+    }
+    if (key.indexOf("search|") === 0) {
+      runLibrary(libListProc, ["search", root.selectedCollection, configuredState.translationLanguage || "en", root.searchQuery.trim().slice(0, 100)])
+    } else {
+      runLibrary(libListProc, ["list", root.selectedCollection, "0", "50"])
+    }
+  }
+
+  function loadMoreRemote() {
+    if (libListProc.running || !browsingRemoteNow() || searchingRemoteNow()) return
+    root.listAppend = true
+    root.listInFlightKey = desiredListKey()
+    root.remoteListLoading = true
+    runLibrary(libListProc, ["list", root.selectedCollection, String(root.remoteList.length), "50"])
+  }
+
+  readonly property var collectionListItems: {
+    var q = root.searchQuery.trim()
+    if (root.browsingRemote) return root.remoteList
+    if (root.searchingRemote) {
+      var local = Model.filterHadiths("all", root.searchQuery, root.configuredState.bookmarks, root.translationLanguage)
+      var rest = []
+      for (var i = 0; i < local.length; i++) if (!isDownloaded(local[i].collection)) rest.push(local[i])
+      return root.remoteList.concat(rest)
+    }
+    return Model.filterHadiths(root.selectedCollection, root.searchQuery, root.configuredState.bookmarks, root.translationLanguage)
+  }
+
+  // Bookmarks: bundled entries, downloaded entries, or a placeholder when neither.
+  function refreshRemoteBookmarks() {
+    var ids = []
+    var bms = root.configuredState.bookmarks || []
+    for (var i = 0; i < bms.length && ids.length < 100; i++) {
+      var p = Model.parseHadithId(bms[i])
+      if (p && isDownloaded(p.collection)) ids.push(bms[i])
+    }
+    if (ids.length === 0) {
+      root.remoteBookmarks = []
+      return
+    }
+    if (!libManyProc.running) runLibrary(libManyProc, ["many"].concat(ids))
+  }
+
+  readonly property var bookmarkItems: {
+    var out = []
+    var byId = {}
+    for (var r = 0; r < root.remoteBookmarks.length; r++) byId[root.remoteBookmarks[r].id] = root.remoteBookmarks[r]
+    var bms = root.configuredState.bookmarks || []
+    for (var i = 0; i < bms.length; i++) {
+      var item = byId[bms[i]] || Model.findHadithById(bms[i]) || Model.placeholderEntry(bms[i])
+      if (item) out.push(item)
+    }
+    return out
   }
 
   function checkDailyRollover() {
@@ -170,6 +378,11 @@ Panel {
   // Navigation & Reader Actions
   // --------------------------------------------------------------------------
   function loadRandomHadith() {
+    var pref = configuredState.preferredCollection || "all"
+    if ((pref === "all" && root.anyDownloaded) || isDownloaded(pref)) {
+      if (!libRandomProc.running) runLibrary(libRandomProc, ["random", pref])
+      return
+    }
     var excludeId = activeHadith ? activeHadith.id : ""
     var item = Model.getRandomHadith(configuredState.preferredCollection, excludeId)
     if (item) {
@@ -177,18 +390,32 @@ Panel {
     }
   }
 
+  function remoteStep(direction) {
+    var h = root.remoteHadith
+    if (!h || !activeHadith || h.id !== activeHadith.id) return false
+    if (root.selectedCollection !== "all" && root.selectedCollection !== h.collection) return false
+    updateState({ currentHadithId: h.collection + "-" + (direction > 0 ? h.next : h.prev) })
+    return true
+  }
+
   function advanceNext() {
+    if (remoteStep(1)) return
     var nextItem = Model.getNextHadith(activeHadith ? activeHadith.id : "", selectedCollection, configuredState.bookmarks)
     if (nextItem) updateState({ currentHadithId: nextItem.id })
   }
 
   function advancePrev() {
+    if (remoteStep(-1)) return
     var prevItem = Model.getPrevHadith(activeHadith ? activeHadith.id : "", selectedCollection, configuredState.bookmarks)
     if (prevItem) updateState({ currentHadithId: prevItem.id })
   }
 
   function selectHadith(item) {
     if (!item) return
+    if (item.placeholder) {
+      activeTab = 3
+      return
+    }
     updateState({ currentHadithId: item.id })
     activeTab = 0
   }
@@ -213,7 +440,7 @@ Panel {
   function copyHadithToClipboard() {
     if (!activeHadith) return
     var meaning = Model.getTranslation(activeHadith, root.translationLanguage).text
-    var text = activeHadith.arabic + "\n\n" + (meaning ? ("\"" + meaning + "\"\n\n") : "") + "[" + activeHadith.collectionName + " #" + activeHadith.hadithNumber + " — Grade: " + (activeHadith.grade || "Sahih") + "]"
+    var text = activeHadith.arabic + "\n\n" + (meaning ? ("\"" + meaning + "\"\n\n") : "") + "[" + activeHadith.collectionName + " #" + activeHadith.hadithNumber + " — Grade: " + (activeHadith.grade || (activeHadith.remote ? "Ungraded" : "Sahih")) + "]"
     clipProc.command = [
       "python3", "-c",
       "import sys, subprocess\n" +
@@ -339,6 +566,92 @@ Panel {
     onTriggered: {
       root.now = new Date()
       root.checkScheduledReminders()
+    }
+  }
+
+  Timer {
+    id: listDebounce
+    interval: 300
+    onTriggered: root.refreshRemoteList()
+  }
+
+  Process {
+    id: libStatusProc
+    stdout: StdioCollector { id: libStatusOut }
+    onExited: function(exitCode) {
+      var d = root.parseLibrary(libStatusOut.text)
+      if (d && d.ok && d.collections && typeof d.collections === "object") root.libraryStatus = d.collections
+    }
+  }
+
+  Process {
+    id: libDownloadProc
+    stdout: StdioCollector { id: libDownloadOut }
+    onExited: function(exitCode) {
+      var d = root.parseLibrary(libDownloadOut.text)
+      if (!d || !d.ok) root.libraryError = (d && d.error) ? String(d.error).slice(0, 200) : "Download failed"
+      root.libraryBusy = ""
+      root.refreshLibrary()
+    }
+  }
+
+  Process {
+    id: libGetProc
+    stdout: StdioCollector { id: libGetOut }
+    onExited: function(exitCode) {
+      var d = root.parseLibrary(libGetOut.text)
+      if (root.pendingGet) {
+        var next = root.pendingGet
+        root.pendingGet = null
+        root.runLibrary(libGetProc, ["get", next[0], next[1]])
+        return
+      }
+      root.remoteLoading = false
+      if (d && d.ok && d.hadith && d.hadith.id === root.currentHadithId) {
+        root.remoteHadith = d.hadith
+      } else if (!(root.remoteHadith && root.remoteHadith.id === root.currentHadithId)) {
+        root.remoteHadith = null
+      }
+    }
+  }
+
+  Process {
+    id: libListProc
+    stdout: StdioCollector { id: libListOut }
+    onExited: function(exitCode) {
+      var d = root.parseLibrary(libListOut.text)
+      root.remoteListLoading = false
+      if (root.listInFlightKey === root.desiredListKey() && d && d.ok && Array.isArray(d.items)) {
+        root.remoteList = root.listAppend ? root.remoteList.concat(d.items) : d.items
+        root.appliedListKey = root.listInFlightKey
+        root.remoteListTotal = d.total !== undefined ? d.total : d.items.length
+        root.remoteSearchTruncated = d.truncated === true
+      }
+      if (root.listPending || root.listInFlightKey !== root.desiredListKey()) {
+        root.listPending = false
+        root.refreshRemoteList()
+      }
+    }
+  }
+
+  Process {
+    id: libManyProc
+    stdout: StdioCollector { id: libManyOut }
+    onExited: function(exitCode) {
+      var d = root.parseLibrary(libManyOut.text)
+      if (d && d.ok && Array.isArray(d.items)) root.remoteBookmarks = d.items
+    }
+  }
+
+  Process {
+    id: libRandomProc
+    stdout: StdioCollector { id: libRandomOut }
+    onExited: function(exitCode) {
+      var d = root.parseLibrary(libRandomOut.text)
+      if (d && d.ok && d.hadith && typeof d.hadith.id === "string") {
+        root.remoteHadith = d.hadith
+        root.updateState({ currentHadithId: d.hadith.id })
+      }
     }
   }
 
@@ -526,7 +839,7 @@ Panel {
                   id: gradeText
                   anchors.centerIn: parent
                   textFormat: Text.PlainText
-                  text: "Grade: " + (root.activeHadith ? (root.activeHadith.grade || "Sahih") : "Sahih")
+                  text: "Grade: " + (root.activeHadith ? (root.activeHadith.grade || (root.activeHadith.remote ? "Ungraded" : "Sahih")) : "Sahih")
                   color: Color.accent
                   font.family: root.barFontFamily
                   font.pixelSize: 9
@@ -602,7 +915,11 @@ Panel {
                     width: parent.width
                     visible: text !== ""
                     text: root.activeTranslation.fallback
-                      ? ("No " + Model.translationLanguageLabel(root.translationLanguage) + " translation for this hadith yet — showing English")
+                      ? (root.activeHadith && root.activeHadith.remote && Model.translationAvailable(root.activeHadith.collection, root.translationLanguage)
+                          && root.isDownloaded(root.activeHadith.collection)
+                          && (root.libraryStatus[root.activeHadith.collection].langs || []).indexOf(root.translationLanguage) === -1
+                        ? ("Download " + root.activeHadith.collectionName + " again in Settings → Full Collections to add " + Model.translationLanguageLabel(root.translationLanguage) + " — showing English")
+                        : ("No " + Model.translationLanguageLabel(root.translationLanguage) + " translation for this hadith yet — showing English"))
                       : root.activeTranslation.source
                     color: Util.alpha(root.barForeground, 0.55)
                     font.family: root.barFontFamily
@@ -696,7 +1013,7 @@ Panel {
 
                 TextField {
                   width: Style.space(400)
-                  placeholderText: "🔍 Search 36,108 Hadiths (intention, prayer, parents, patience)…"
+                  placeholderText: "🔍 Search " + Model.formatCount(root.availableTotal) + " hadiths (intention, prayer, parents, patience)…"
                   text: root.searchQuery
                   onTextChanged: root.searchQuery = text
                 }
@@ -715,7 +1032,7 @@ Panel {
               spacing: Style.space(4)
 
               Button {
-                text: "📖 All (36,108)"
+                text: "📖 All (" + Model.formatCount(root.availableTotal) + ")"
                 selected: root.selectedCollection === "all"
                 onClicked: root.selectedCollection = "all"
               }
@@ -725,9 +1042,13 @@ Panel {
 
                 Button {
                   required property var modelData
-                  text: modelData.name + " (" + modelData.totalHadiths + ")"
+                  text: modelData.name + " (" + (root.isDownloaded(modelData.key)
+                    ? Model.formatCount(root.collectionCount(modelData.key))
+                    : (Model.bundledCount(modelData.key) + " of " + Model.formatCount(modelData.totalHadiths))) + ")"
                   selected: root.selectedCollection === modelData.key
-                  tooltipText: modelData.arabicName + " by " + modelData.author
+                  tooltipText: modelData.arabicName + " by " + modelData.author + (root.isDownloaded(modelData.key)
+                    ? " · full collection downloaded"
+                    : " · " + Model.bundledCount(modelData.key) + " bundled; download the full collection in Settings")
                   onClicked: root.selectedCollection = modelData.key
                 }
               }
@@ -753,11 +1074,29 @@ Panel {
               width: parent.width
               spacing: Style.space(4)
 
-              readonly property var filteredList: Model.filterHadiths(root.selectedCollection, root.searchQuery, root.configuredState.bookmarks, root.translationLanguage)
+              readonly property var filteredList: root.collectionListItems
 
               Text {
                 textFormat: Text.PlainText
-                visible: parent.filteredList.length === 0
+                visible: text !== ""
+                width: parent.width
+                text: root.remoteListLoading && parent.filteredList.length === 0
+                  ? "Loading…"
+                  : (root.remoteSearchTruncated && root.searchingRemote
+                    ? "Showing the first 100 matches. Refine the search to narrow it down."
+                    : (!root.browsingRemote && root.selectedCollection !== "all" && root.searchQuery.trim() === ""
+                      ? "Showing " + Model.bundledCount(root.selectedCollection) + " bundled hadiths. Download the full collection in Settings → Full Collections."
+                      : ""))
+                color: Qt.darker(root.barForeground, 1.4)
+                font.family: root.barFontFamily
+                font.pixelSize: Style.font.caption
+                wrapMode: Text.WordWrap
+                horizontalAlignment: Text.AlignHCenter
+              }
+
+              Text {
+                textFormat: Text.PlainText
+                visible: parent.filteredList.length === 0 && !root.remoteListLoading
                 width: parent.width
                 text: "No hadiths found matching your filter."
                 color: Qt.darker(root.barForeground, 1.4)
@@ -826,7 +1165,7 @@ Panel {
                           }
                           Text {
                             textFormat: Text.PlainText
-                            text: "• " + (modelData.grade || "Sahih")
+                            text: "• " + (modelData.grade || (modelData.remote ? "Ungraded" : "Sahih"))
                             color: Qt.darker(root.barForeground, 1.4)
                             font.family: root.barFontFamily
                             font.pixelSize: Style.font.caption
@@ -863,6 +1202,15 @@ Panel {
                   }
                 }
               }
+
+              Button {
+                visible: root.browsingRemote && !root.searchingRemote && root.remoteList.length < root.remoteListTotal
+                anchors.horizontalCenter: parent.horizontalCenter
+                text: root.remoteListLoading
+                  ? "Loading…"
+                  : "Load more (" + Model.formatCount(root.remoteList.length) + " of " + Model.formatCount(root.remoteListTotal) + ")"
+                onClicked: root.loadMoreRemote()
+              }
             }
           }
         }
@@ -874,7 +1222,7 @@ Panel {
           visible: root.activeTab === 2
           anchors.fill: parent
 
-          readonly property var bookmarkedList: Model.filterHadiths("bookmarks", "", root.configuredState.bookmarks)
+          readonly property var bookmarkedList: root.bookmarkItems
 
           Text {
             textFormat: Text.PlainText
@@ -1294,6 +1642,109 @@ Panel {
                     selected: (root.configuredState.barFormatIndex !== undefined ? root.configuredState.barFormatIndex : 0) === index
                     tooltipText: "Example: " + modelData.example + " (Right-click widget on bar to cycle)"
                     onClicked: root.updateState({ barFormatIndex: index })
+                  }
+                }
+              }
+            }
+
+            PanelSeparator { foreground: root.barForeground }
+
+            PanelSectionHeader {
+              text: "4. FULL COLLECTIONS (OPTIONAL DOWNLOAD)"
+              foreground: root.barForeground
+              fontFamily: root.barFontFamily
+            }
+
+            Text {
+              textFormat: Text.PlainText
+              width: parent.width
+              wrapMode: Text.WordWrap
+              text: "The plugin bundles " + Model.formatCount(Data.BUILTIN_HADITHS.length) + " hadiths. Download a full collection to read, search and navigate all of it offline. "
+                + "Downloads run only when you click, from cdn.jsdelivr.net (fawazahmed0/hadith-api), and include Arabic, English and the selected translation language when available. "
+                + "Stored in ~/.cache/omarchy-hadith."
+              color: Qt.darker(root.barForeground, 1.3)
+              font.family: root.barFontFamily
+              font.pixelSize: Style.font.caption
+            }
+
+            Text {
+              textFormat: Text.PlainText
+              visible: root.libraryError !== ""
+              width: parent.width
+              wrapMode: Text.WordWrap
+              text: "Download failed: " + root.libraryError
+              color: Color.urgent
+              font.family: root.barFontFamily
+              font.pixelSize: Style.font.caption
+            }
+
+            Repeater {
+              model: Data.COLLECTIONS
+
+              Item {
+                required property var modelData
+                readonly property var info: (root.libraryStatus && root.libraryStatus[modelData.key]) || null
+                readonly property bool downloaded: info !== null
+                readonly property bool busy: root.libraryBusy === modelData.key
+                readonly property bool missingLang: info !== null && root.translationLanguage !== "en"
+                  && Model.translationAvailable(modelData.key, root.translationLanguage)
+                  && (info.langs || []).indexOf(root.translationLanguage) === -1
+                width: settingsCol.width
+                height: Style.space(32)
+
+                Column {
+                  anchors.left: parent.left
+                  anchors.right: collActions.left
+                  anchors.rightMargin: Style.space(8)
+                  anchors.verticalCenter: parent.verticalCenter
+                  spacing: Style.space(1)
+
+                  Text {
+                    textFormat: Text.PlainText
+                    text: modelData.name
+                    color: root.barForeground
+                    font.family: root.barFontFamily
+                    font.pixelSize: Style.font.bodySmall
+                    font.bold: downloaded
+                    elide: Text.ElideRight
+                    width: parent.width
+                  }
+
+                  Text {
+                    textFormat: Text.PlainText
+                    width: parent.width
+                    elide: Text.ElideRight
+                    text: busy
+                      ? (downloaded ? "Working…" : "Downloading…")
+                      : (info
+                        ? (Model.formatCount(info.count) + " hadiths · " + (info.langs || []).join(" ").toUpperCase() + " · " + Model.formatMB(info.bytes, true))
+                        : (Model.bundledCount(modelData.key) + " bundled of " + Model.formatCount(modelData.totalHadiths)
+                          + " · ~" + Model.formatMB(Model.downloadEstimateMB(modelData.key, root.translationLanguage), false) + " download"))
+                    color: Qt.darker(root.barForeground, 1.4)
+                    font.family: root.barFontFamily
+                    font.pixelSize: Style.font.caption
+                  }
+                }
+
+                Row {
+                  id: collActions
+                  anchors.right: parent.right
+                  anchors.verticalCenter: parent.verticalCenter
+                  spacing: Style.space(4)
+
+                  Button {
+                    text: downloaded ? (missingLang ? "Add " + root.translationLanguage.toUpperCase() : "Update") : "Download"
+                    enabled: root.libraryBusy === ""
+                    tooltipText: downloaded ? "Download this collection again (keeps its languages)" : "Download the full collection"
+                    onClicked: root.downloadCollection(modelData.key)
+                  }
+
+                  Button {
+                    visible: downloaded
+                    text: "Delete"
+                    accent: Color.urgent
+                    enabled: root.libraryBusy === ""
+                    onClicked: root.deleteCollection(modelData.key)
                   }
                 }
               }

@@ -22,12 +22,6 @@ from pathlib import Path
 
 API = "https://cdn.jsdelivr.net/gh/fawazahmed0/hadith-api@1/editions"
 
-# Collections with an edition upstream. Turkish Nasa'i is excluded on purpose: words
-# inside parentheses were lost in that edition, so its sentences are broken.
-EDITIONS = {
-    "tr": {"bukhari", "muslim", "abudawud", "tirmidhi", "ibnmajah", "malik", "nawawi"},
-    "ru": {"bukhari", "muslim", "abudawud"},
-}
 PREFIX = {"tr": "tur", "ru": "rus"}
 
 SOURCES = {
@@ -35,34 +29,9 @@ SOURCES = {
     "ru": "Russian: fawazahmed0/hadith-api, from isnad.link (Sahih al-Bukhari: Abdullah Nirsha and the editors of daura.com)",
 }
 
-TR_TAILS = [
-    r"\s*\(?\s*Tekrar[ıi]?\s*:.*$",
-    r"\s*\(?\s*Diğer\s+[Tt]ahric.*$",
-    r"\s*AHMED DAVUDOĞLU ŞERHİ.*$",
-    r"\s*\S*BURAYA TIKLA.*$",
-    r"\s*\d+\s+numaralı hadisin kaynakları.*$",
-    r"\s*Bu Hadis Sadece Muvatta da var.*$",
-    r"\s*\d*\s*Yalnızca Müslim rivayet etmiştir.*$",
-    r"\s*Tuhfetu'l-[EeŞş]\S*.*$",
-    r"\s*Bu hadis\.?\s*sihah-ı Sitte.*$",
-]
-
-
-def clean_tr(t):
-    t = t.replace("*", "")
-    t = re.sub(r"\[\d+\]", "", t)
-    for p in TR_TAILS:
-        t = re.sub(p, "", t, flags=re.S)
-    t = t.replace("<r—", "«—")
-    t = re.sub(r"buyurdu>$", "buyurdu.", t.strip())
-    return re.sub(r"[ \t]+", " ", t).strip()
-
-
-def clean_ru(t):
-    t = t.replace("\\n", "\n")
-    t = re.sub(r"\[\d+\]", "", t)
-    return re.sub(r"[ \t]+", " ", t).strip()
-
+# Cleanup rules live in the library helper so bundled and downloaded text match.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "bin"))
+from hadith_library import TRANSLATIONS as EDITIONS, clean_ru, clean_tr  # noqa: E402
 
 CLEAN = {"tr": clean_tr, "ru": clean_ru}
 

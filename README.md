@@ -77,7 +77,14 @@ Developed by [@abdalrohman](https://github.com/abdalrohman).
 - 🌅 **Daily Hadith of the Day**: Scheduled desktop notification every morning (default: `08:00`).
 - ⏳ **Periodic Reminder**: Configurable intervals (`1h`, `2h`, `4h`, `8h`, `12h`, `24h`) with gentle chime audio.
 
-#### 5. Turkish & Russian Translations
+#### 5. Full Collections (Optional Download)
+- The plugin bundles 100 hadiths (10 per collection). Under *Settings → Full Collections* you can download any collection in full, e.g. all 5,272 of Sunan Abu Dawud. You can then browse it (50 at a time, with *Load more*), search it in Arabic, English or the chosen translation, and step through it with Next/Prev, Random and bookmarks, all offline.
+- Collection counts show what's actually available: `Sahih al-Bukhari (10 of 7,580)` until downloaded, then the real count.
+- Downloads run only when you click *Download*. They come from `cdn.jsdelivr.net` ([fawazahmed0/hadith-api](https://github.com/fawazahmed0/hadith-api)) and include Arabic, English and the selected translation language when available (Sahih al-Bukhari ≈ 14 MB, plus ≈ 10 MB for Turkish). Data is stored in `~/.cache/omarchy-hadith/` and can be deleted per collection.
+- Grades: Sahih al-Bukhari and Sahih Muslim are graded Sahih. Other collections show Al-Albani's grade from the data when present, otherwise *Ungraded*.
+- All downloading, caching and search runs in `bin/hadith_library.py` (Python standard library only). It uses a fixed source URL, a 24 MB per-file cap, timeouts and atomic writes, and validates every argument. The panel only receives small, size-capped JSON results.
+
+#### 6. Turkish & Russian Translations
 - Pick **English**, **Türkçe** or **Русский** under *Settings → Reading Preferences → Translation Language*. The reader, Copy, notifications and search use the chosen language.
 - Bundled offline for the built-in hadiths: Turkish 64/100 (Bukhari, Muslim, Abu Dawud, Ibn Majah, Malik, Nawawi, 4 of Tirmidhi) and Russian 30/100 (Bukhari, Muslim, Abu Dawud). A hadith without a translation shows English, with a note saying so.
 - Source: [fawazahmed0/hadith-api](https://github.com/fawazahmed0/hadith-api) (Unlicense), the same dataset as the built-in Arabic and English. The Turkish translator isn't credited upstream. Russian comes from [isnad.link](https://isnad.link/) (Sahih al-Bukhari: Abdullah Nirsha and the editors of daura.com). The credit is shown under every translation.
