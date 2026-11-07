@@ -53,6 +53,10 @@ Panel {
   property string searchQuery: ""
   property bool showEnglishTranslation: true
 
+  // Meaning text in the chosen language (English fallback when not translated)
+  readonly property string translationLanguage: configuredState.translationLanguage || "en"
+  readonly property var activeTranslation: Model.getTranslation(activeHadith, translationLanguage)
+
   // Tracking last fired scheduled reminders to prevent double firing in the same minute
   property string lastFiredDailyDate: ""
 
@@ -208,7 +212,8 @@ Panel {
 
   function copyHadithToClipboard() {
     if (!activeHadith) return
-    var text = activeHadith.arabic + "\n\n" + (activeHadith.english ? ("\"" + activeHadith.english + "\"\n\n") : "") + "[" + activeHadith.collectionName + " #" + activeHadith.hadithNumber + " — Grade: " + (activeHadith.grade || "Sahih") + "]"
+    var meaning = Model.getTranslation(activeHadith, root.translationLanguage).text
+    var text = activeHadith.arabic + "\n\n" + (meaning ? ("\"" + meaning + "\"\n\n") : "") + "[" + activeHadith.collectionName + " #" + activeHadith.hadithNumber + " — Grade: " + (activeHadith.grade || "Sahih") + "]"
     clipProc.command = [
       "python3", "-c",
       "import sys, subprocess\n" +
@@ -237,7 +242,7 @@ Panel {
       var daily = Model.getDailyHadith(now, configuredState.preferredCollection)
       if (daily) {
         updateState({ currentHadithId: daily.id, dailyHadithDate: todayKey })
-        sendHadithNotification("📜 حديث اليوم (" + daily.collectionName + ")", daily.arabic + "\n\n" + (daily.english ? ("\"" + daily.english + "\"") : ""))
+        sendHadithNotification("📜 حديث اليوم (" + daily.collectionName + ")", daily.arabic + "\n\n" + root.quotedMeaning(daily))
       }
       return
     }
@@ -249,12 +254,17 @@ Panel {
         var randItem = Model.getRandomHadith(configuredState.preferredCollection, activeHadith ? activeHadith.id : "")
         if (randItem) {
           updateState({ currentHadithId: randItem.id })
-          sendHadithNotification("📜 من هدي النبوة", randItem.arabic + "\n\n" + (randItem.english ? ("\"" + randItem.english + "\"") : ""))
+          sendHadithNotification("📜 من هدي النبوة", randItem.arabic + "\n\n" + root.quotedMeaning(randItem))
         }
       } else {
         timerSecondsRemaining--
       }
     }
+  }
+
+  function quotedMeaning(item) {
+    var meaning = Model.getTranslation(item, root.translationLanguage).text
+    return meaning ? ("\"" + meaning + "\"") : ""
   }
 
   function sendHadithNotification(title, message) {
@@ -568,7 +578,7 @@ Panel {
 
                 // English Translation Block
                 Column {
-                  visible: root.showEnglishTranslation && root.activeHadith && root.activeHadith.english !== ""
+                  visible: root.showEnglishTranslation && root.activeTranslation.text !== ""
                   width: parent.width
                   spacing: Style.space(8)
 
@@ -577,13 +587,29 @@ Panel {
                   Text {
                     textFormat: Text.PlainText
                     width: parent.width
-                    text: root.activeHadith ? ("\"" + root.activeHadith.english + "\"") : ""
+                    text: root.activeTranslation.text ? ("\"" + root.activeTranslation.text + "\"") : ""
                     color: root.barForeground
                     font.family: root.barFontFamily
                     font.pixelSize: Style.font.bodySmall
                     wrapMode: Text.WordWrap
                     horizontalAlignment: Text.AlignHCenter
                     lineHeight: 1.3
+                  }
+
+                  // Fallback notice / translation source
+                  Text {
+                    textFormat: Text.PlainText
+                    width: parent.width
+                    visible: text !== ""
+                    text: root.activeTranslation.fallback
+                      ? ("No " + Model.translationLanguageLabel(root.translationLanguage) + " translation for this hadith yet — showing English")
+                      : root.activeTranslation.source
+                    color: Util.alpha(root.barForeground, 0.55)
+                    font.family: root.barFontFamily
+                    font.pixelSize: Style.font.bodySmall - 2
+                    font.italic: true
+                    wrapMode: Text.WordWrap
+                    horizontalAlignment: Text.AlignHCenter
                   }
                 }
               }
@@ -630,14 +656,14 @@ Panel {
 
               Button {
                 text: "📋 Copy"
-                tooltipText: "Copy Arabic & English Hadith with citation to clipboard"
+                tooltipText: "Copy Arabic & translated Hadith with citation to clipboard"
                 onClicked: root.copyHadithToClipboard()
               }
 
               Button {
-                text: root.showEnglishTranslation ? "En Meaning" : "En"
+                text: root.translationLanguage.toUpperCase() + (root.showEnglishTranslation ? " Meaning" : "")
                 selected: root.showEnglishTranslation
-                tooltipText: "Toggle English Translation"
+                tooltipText: "Toggle " + Model.translationLanguageLabel(root.translationLanguage) + " translation (language: Settings)"
                 onClicked: root.showEnglishTranslation = !root.showEnglishTranslation
               }
             }
@@ -727,7 +753,7 @@ Panel {
               width: parent.width
               spacing: Style.space(4)
 
-              readonly property var filteredList: Model.filterHadiths(root.selectedCollection, root.searchQuery, root.configuredState.bookmarks)
+              readonly property var filteredList: Model.filterHadiths(root.selectedCollection, root.searchQuery, root.configuredState.bookmarks, root.translationLanguage)
 
               Text {
                 textFormat: Text.PlainText
@@ -1102,6 +1128,44 @@ Panel {
               text: "2. READING PREFERENCES & TYPOGRAPHY"
               foreground: root.barForeground
               fontFamily: root.barFontFamily
+            }
+
+            // Translation Language Selector
+            Item {
+              width: parent.width
+              height: Style.space(32)
+
+              Row {
+                anchors.left: parent.left
+                anchors.verticalCenter: parent.verticalCenter
+                spacing: Style.space(8)
+
+                Text {
+                  textFormat: Text.PlainText
+                  text: "Translation Language:"
+                  color: root.barForeground
+                  font.family: root.barFontFamily
+                  font.pixelSize: Style.font.bodySmall
+                  anchors.verticalCenter: parent.verticalCenter
+                }
+              }
+
+              Row {
+                anchors.right: parent.right
+                anchors.verticalCenter: parent.verticalCenter
+                spacing: Style.space(4)
+
+                Repeater {
+                  model: Model.TRANSLATION_LANGUAGES
+
+                  Button {
+                    required property var modelData
+                    text: modelData.label
+                    selected: root.translationLanguage === modelData.code
+                    onClicked: root.updateState({ translationLanguage: modelData.code })
+                  }
+                }
+              }
             }
 
             // Font Size Selector
